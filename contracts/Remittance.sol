@@ -9,6 +9,9 @@ contract Remittance is Destructible {
         event NewRemittanceRequest(address indexed sender, uint256 amount);
         event ClaimFundsRequested(address indexed sender, uint256 amount);
 
+	//Flat owner tax for every remittance request.
+        uint24 public constant OWNER_TAX = 100;
+
         uint256 public constant claimBackStartAfter = 1 weeks;
         uint256 public constant claimBackDuration = 2 weeks;
 
@@ -18,11 +21,12 @@ contract Remittance is Destructible {
                 uint256 claimBackEndDate;
                 address sentFrom;
         }
-    
-        //Flat owner tax for every remittance request.
-        uint24 public constant OWNER_TAX = 100;
 
         mapping(bytes32 => RemittanceData) public remittances;
+
+	mapping(address => bool) public trustedExchanges;
+
+	function () public payable {}
 
         //keccak256(senderPassHash, recipientPassHash, senderAddress, recipientAddress) => bytes32
         function newRemittance(bytes32 _remittanceHash) public payable {
@@ -31,7 +35,7 @@ contract Remittance is Destructible {
                 remittances[_remittanceHash].funds = remittances[_remittanceHash].funds.add(msg.value - OWNER_TAX);
                 remittances[_remittanceHash].sentFrom = msg.sender;
 
-                //if claim back period is over, sender is not allowed to claim his funds even if he sends more funds
+                //if there is another remittane request for the same hash, claim back periods will remain the same
                 if(remittances[_remittanceHash].claimBackStartDate == 0){
                         remittances[_remittanceHash].claimBackStartDate = now.add(claimBackStartAfter);
                         remittances[_remittanceHash].claimBackEndDate = remittances[_remittanceHash].claimBackStartDate + claimBackDuration;
@@ -43,27 +47,56 @@ contract Remittance is Destructible {
         function claimFunds (
                 bytes32 _senderPassHash,
                 bytes32 _recipientPassHash,
-                address _senderAddress
+                address _senderAddress,
+		address _recipientAddress
         ) public returns(bool success) {
+		require(_recipientAddress == msg.sender || trustedExchanges[msg.sender] == true);
+
                 bytes32 remittanceHash = keccak256(_senderPassHash, _recipientPassHash, _senderAddress, tx.origin);
 
-                RemittanceData memory remmitance = remittances[remittanceHash];
-
-                require(remmitance.funds > 0);
-
-                //claim funds back
-	        if(remmitance.sentFrom == msg.sender){
-	                require(now <= remmitance.claimBackEndDate && now >= remmitance.claimBackStartDate);
-	        }
-
-                uint256 funds = remmitance.funds;
-
-                delete remittances[remittanceHash];
-
-                msg.sender.transfer(funds);
-
-	        emit ClaimFundsRequested(msg.sender, funds);
+                _transferFunds(remittanceHash, msg.sender);
 
 	        return true;
         }
+
+	function claimBack (bytes32 _remittanceHash) external {
+		uint256 claimBackStartDate = getClaimBackStartDate(_remittanceHash);
+		uint256 claimBackEndDate = getClaimBackEndDate(_remittanceHash);
+
+		require(now <= claimBackEndDate && now >= claimBackStartDate);
+
+		_transferFunds(_remittanceHash, msg.sender);
+	}
+
+	function _transferFunds(bytes32 _remittanceHash, address _recipient) internal {
+		require(remittances[_remittanceHash].funds > 0);
+
+		uint256 funds = remittances[_remittanceHash].funds;
+
+		delete remittances[_remittanceHash];
+		
+		_recipient.transfer(funds);
+
+		emit ClaimFundsRequested(msg.sender, funds);
+	}
+
+	function setExchangeStatus(address _exchange, bool _status) external onlyOwner {
+		trustedExchanges[_exchange] = _status;
+	}
+
+	function getFunds(bytes32 _remittanceHash) external view returns(uint256) {
+		return remittances[_remittanceHash].funds;
+	}
+
+	function getClaimBackStartAfter() public view returns(uint256) {
+		return claimBackStartAfter;
+	}
+
+	function getClaimBackStartDate(bytes32 _remittanceHash) public view returns(uint256) {
+		return remittances[_remittanceHash].claimBackStartDate;
+	}
+
+	function getClaimBackEndDate(bytes32 _remittanceHash) public view returns(uint256) {
+		return remittances[_remittanceHash].claimBackEndDate;
+	}
 }

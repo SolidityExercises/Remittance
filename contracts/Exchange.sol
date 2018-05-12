@@ -11,7 +11,7 @@ contract Exchange is Destructible {
         using SafeMath for uint256;
 
         event ExchangeRateSet(address currency, uint256 rate);
-        event WithdrawalPerformed(address recipient, address  currency);
+        event WithdrawalPerformed(address requestor, address  currency);
         event ConversionPerformed(
 	        address indexed sender,
 		address indexed recipient,
@@ -21,8 +21,6 @@ contract Exchange is Destructible {
 
 	//Flat owner tax for every convert request.
         uint24 public constant OWNER_TAX = 100;
-
-        address public owner;
 
         IRemittance public remittance;
     
@@ -41,30 +39,42 @@ contract Exchange is Destructible {
         }
 
         constructor (address _remittance) public addressValid(_remittance) {
-                owner = msg.sender;
                 remittance = IRemittance(_remittance);
         }
 
+	function getCurrencyBalance(address _currency) external view returns (uint256) {
+		return balances[msg.sender][_currency];
+	}
+
+	/**
+	* @dev Designed to use this function as setter for trusted currencies
+	* The currency should be ERC20 compliant
+	* The currency should have set decimals places in order to set exchange rate accordingly from the owner
+	*/
         function setExchangeRate(address _currency, uint256 _rate) public onlyOwner {
                 exchangeRates[_currency] = _rate;
 
                 emit ExchangeRateSet(_currency, _rate);
         }
 
+	function () public payable {}
+
         function convertFunds(
                 bytes32 _recipientPassHash,
                 bytes32 _senderPassHash,
                 address _senderAddress,
+		address _recipientAddress,
                 address _currency
         ) public hasConvertRate(_currency) {
                 uint256 oldBalance = address(this).balance;
-                remittance.claimFunds(_senderPassHash, _recipientPassHash, _senderAddress);
+                remittance.claimFunds(_senderPassHash, _recipientPassHash, _senderAddress, _recipientAddress);
                 uint256 newBalance = address(this).balance;
 
                 require(newBalance - oldBalance > OWNER_TAX);
 
-                uint256 amount = newBalance.sub(oldBalance + OWNER_TAX);
+                uint256 amount = newBalance.sub(oldBalance);
                 uint256 convertedAmount = amount.mul(exchangeRates[_currency]);
+		convertedAmount.sub(OWNER_TAX);
 
                 balances[msg.sender][_currency] = balances[msg.sender][_currency].add(convertedAmount);
  
