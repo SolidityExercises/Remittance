@@ -3,6 +3,7 @@ pragma solidity ^0.4.21;
 import '../../../contracts/Remittance.sol';
 
 contract RemittanceMock is Remittance {
+<<<<<<< HEAD
 	mapping(address => bool) public trustedExchanges;
 
 	modifier onlyOwner() {
@@ -26,4 +27,6 @@ contract RemittanceMock is Remittance {
 	function setExchangeStatus(address _exchange) external onlyOwner {
 		trustedExchanges[_exchange] = true;
 	}
+=======
+>>>>>>> 2959fb9d63257c86ccad263d4b761db4ba7331e9
 }
