@@ -29,114 +29,127 @@ contract('Exchange', ([owner, other]) => {
 		remittance.setExchangeStatus(sut.address, true);
 	});
 
-	it('constructor should revert when passed empty `_remittance` address', async () => {
-		const result = Exchange.new(zeroAddress);
+	describe('constructor should', async () => {
 
-		await assertRevert(result);
+		it('revert when passed empty `_remittance` address', async () => {
+			const result = Exchange.new(zeroAddress);
+
+			await assertRevert(result);
+		});
+
+		it('set proper `remittance` instance when passed valid arguments', async () => {
+			const result = await sut.remittance.call();
+
+			assert.equal(result, remittance.address);
+		});
 	});
 
-	it('constructor should set proper `remittance` instance when passed valid arguments', async () => {
-		const result = await sut.remittance.call();
+	describe('convertFunds should', async () => {
 
-		assert.equal(result, remittance.address);
+		it('revert when `remittance.claimFunds` returns false', async () => {
+			const transferValue = 42;
+			await web3.eth.sendTransaction({ to: remittance.address, value: transferValue});
+
+			const result = sut.convertFunds(notUsed, notUsed, notUsed, notUsed, localCurrency.address);
+
+			await assertRevert(result);
+		});
+
+		it('add exact currency amount to `msg.sender` balance when the exchange rate is under a unit', async () => {
+			const transferValue = web3.toWei(2, 'ether');
+			const expectedBalance = web3.toWei(4, 'ether');
+			await web3.eth.sendTransaction({ to: remittance.address, value: transferValue });
+			
+			await sut.setExchangeRate(localCurrency.address, 2);
+			await sut.convertFunds(notUsed, notUsed, notUsed, notUsed, localCurrency.address);
+
+			const result = await sut.getCurrencyBalance(localCurrency.address);
+
+			assert.equal(result.valueOf(), expectedBalance - owner_tax);
+		});
+
+		it('raise ConversionPerformed event when passed valid arguments', async () => {
+			const event = sut.ConversionPerformed();
+			const promiEvent = watchEvent(event);
+
+			const transferValue = web3.toWei(1, 'ether');
+			await web3.eth.sendTransaction({ to: remittance.address, value: transferValue });
+
+			await sut.setExchangeRate(localCurrency.address, 2);
+			await sut.convertFunds(notUsed, notUsed, notUsed, notUsed, localCurrency.address);
+
+			const result = await promiEvent;
+			event.stopWatching();
+			assert.equal(result.args.sender, notUsed);
+			assert.equal(result.args.recipient, owner);
+			assert.equal(result.args.currency, localCurrency.address);
+			assert.equal(result.args.amount.valueOf(), transferValue);
+		});
 	});
 
-	it('convertFunds should revert when `remittance.claimFunds` returns false', async () => {
-		const transferValue = 42;
-		await web3.eth.sendTransaction({ to: remittance.address, value: transferValue});
+	describe('withdrawFunds should', async () => {
 
-		const result = sut.convertFunds(notUsed, notUsed, notUsed, notUsed, localCurrency.address);
+		it('revert when the `msg.sender` has not got enough balance', async () => {
+			const result = sut.withdrawFunds(localCurrency.address);
 
-		await assertRevert(result);
+			await assertRevert(result);
+		});
+
+		it('lower the `msg.sender` balance with exact value when passed valid arguments', async () => {
+			const transferValue = web3.toWei(1, 'ether');
+			await web3.eth.sendTransaction({ to: remittance.address, value: transferValue });
+			await sut.setExchangeRate(localCurrency.address, 2);
+			await sut.convertFunds(notUsed, notUsed, notUsed, notUsed, localCurrency.address);
+			const ownerBalance = await sut.getCurrencyBalance(localCurrency.address);
+
+			await sut.withdrawFunds(localCurrency.address);
+
+			const ownerNewBalance = await sut.getCurrencyBalance(localCurrency.address);
+
+			assert.equal(ownerNewBalance, 0);
+		});
+
+		it('raise WithdrawalPerformed event when passed valid arguments', async () => {
+			const transferValue = web3.toWei(1, 'ether');
+			await web3.eth.sendTransaction({ to: remittance.address, value: transferValue });
+			await sut.setExchangeRate(localCurrency.address, 2);
+			await sut.convertFunds(notUsed, notUsed, notUsed, notUsed, localCurrency.address);
+			const event = sut.WithdrawalPerformed();
+			const promiEvent = watchEvent(event);
+
+			const amount = sut.withdrawFunds(localCurrency.address);
+
+
+			const result = await promiEvent;
+			event.stopWatching();
+
+			assert.equal(result.args.requestor, owner);
+			assert.equal(result.args.currency, localCurrency.address);
+		});
 	});
 
-	it('convertFunds should add exact currency amount to `msg.sender` balance when the exchange rate is under a unit', async () => {
-		const transferValue = web3.toWei(2, 'ether');
-		const expectedBalance = web3.toWei(4, 'ether');
-		await web3.eth.sendTransaction({ to: remittance.address, value: transferValue });
-		
-		await sut.setExchangeRate(localCurrency.address, 2);
-		await sut.convertFunds(notUsed, notUsed, notUsed, notUsed, localCurrency.address);
+	describe('withdrawFunds should', async () => {
 
-		const result = await sut.getCurrencyBalance(localCurrency.address);
+		it('setExchangeRate should revert when invoked not from the contract owner', async () => {
+			const newExchangeRate = 3;
 
-		assert.equal(result.valueOf(), expectedBalance - owner_tax);
-	});
+			const result = sut.setExchangeRate(localCurrency.address, newExchangeRate, { from: other });
 
-	it('convertFunds should raise ConversionPerformed event when passed valid arguments', async () => {
-		const event = sut.ConversionPerformed();
-		const promiEvent = watchEvent(event);
+			assertRevert(result);
+		});
 
-		const transferValue = web3.toWei(1, 'ether');
-		await web3.eth.sendTransaction({ to: remittance.address, value: transferValue });
+		it('setExchangeRate should raise ExchangeRateSet event', async () => {
+			const newExchangeRate = 3;
+			const event = sut.ExchangeRateSet();
+			const promiEvent = watchEvent(event);
 
-		await sut.setExchangeRate(localCurrency.address, 2);
-		await sut.convertFunds(notUsed, notUsed, notUsed, notUsed, localCurrency.address);
+			await sut.setExchangeRate(localCurrency.address, newExchangeRate);
 
-		const result = await promiEvent;
-		event.stopWatching();
-		assert.equal(result.args.sender, notUsed);
-		assert.equal(result.args.recipient, owner);
-		assert.equal(result.args.currency, localCurrency.address);
-		assert.equal(result.args.amount.valueOf(), transferValue);
-	});
+			const result = await promiEvent;
+			event.stopWatching();
 
-	it('withdrawFunds should revert when the `msg.sender` has not got enough balance', async () => {
-		const result = sut.withdrawFunds(localCurrency.address);
-
-		await assertRevert(result);
-	});
-
-	it('withdrawFunds should lower the `msg.sender` balance with exact value when passed valid arguments', async () => {
-		const transferValue = web3.toWei(1, 'ether');
-		await web3.eth.sendTransaction({ to: remittance.address, value: transferValue });
-		await sut.setExchangeRate(localCurrency.address, 2);
-		await sut.convertFunds(notUsed, notUsed, notUsed, notUsed, localCurrency.address);
-		const ownerBalance = await sut.getCurrencyBalance(localCurrency.address);
-
-		await sut.withdrawFunds(localCurrency.address);
-
-		const ownerNewBalance = await sut.getCurrencyBalance(localCurrency.address);
-
-		assert.equal(ownerNewBalance, 0);
-	});
-
-	it('withdrawFunds should raise WithdrawalPerformed event when passed valid arguments', async () => {
-		const transferValue = web3.toWei(1, 'ether');
-		await web3.eth.sendTransaction({ to: remittance.address, value: transferValue });
-		await sut.setExchangeRate(localCurrency.address, 2);
-		await sut.convertFunds(notUsed, notUsed, notUsed, notUsed, localCurrency.address);
-		const event = sut.WithdrawalPerformed();
-		const promiEvent = watchEvent(event);
-
-		const amount = sut.withdrawFunds(localCurrency.address);
-
-		const result = await promiEvent;
-		event.stopWatching();
-
-		assert.equal(result.args.requestor, owner);
-		assert.equal(result.args.currency, localCurrency.address);
-	});
-
-	it('setExchangeRate should revert when invoked not from the contract owner', async () => {
-		const newExchangeRate = 3;
-
-		const result = sut.setExchangeRate(localCurrency.address, newExchangeRate, { from: other });
-
-		assertRevert(result);
-	});
-
-	it('setExchangeRate should raise ExchangeRateSet event', async () => {
-		const newExchangeRate = 3;
-		const event = sut.ExchangeRateSet();
-		const promiEvent = watchEvent(event);
-
-		await sut.setExchangeRate(localCurrency.address, newExchangeRate);
-
-		const result = await promiEvent;
-		event.stopWatching();
-
-		assert.equal(result.args.currency, localCurrency.address);
-		assert.equal(result.args.rate.valueOf(), newExchangeRate);
+			assert.equal(result.args.currency, localCurrency.address);
+			assert.equal(result.args.rate.valueOf(), newExchangeRate);
+		});
 	});
 });
